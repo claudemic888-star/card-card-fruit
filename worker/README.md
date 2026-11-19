@@ -8,6 +8,8 @@
 
 PSA 通行證只會存喺 Cloudflare，**唔會出現喺網頁或者 GitHub**。
 
+**而家嘅設定**：Cloudflare Worker `card-card-fruit-api` 已經連接呢個 repo（分支 `main`、路徑 `/worker`）。`worker/` 入面有改動 push 上 `main`，Cloudflare 就會自動部署，唔使再做下面第 1 至 5 步。
+
 ```
 客人手機 ──> app（GitHub Pages）──> 後台（Cloudflare Worker）──> PSA 官方 API
                                         │
