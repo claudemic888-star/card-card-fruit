@@ -103,9 +103,15 @@ summary::-webkit-details-marker{display:none}
 <body>
 <div id="app"></div>
 <script>
+// ===== 後台設定 =====
+// 留空 = 示範模式（用示範號碼）。
+// 部署好 Cloudflare Worker 之後，填 Worker 網址（唔使加 /api），例如：
+// var API_BASE='https://card-card-fruit-api.你的帳戶.workers.dev';
+var API_BASE='';
 var S={game:'全部',
 join:false,user:false,sent:false,
 noti:{},regs:{},evId:'E1',after:null,
+live:{cert:null,certQ:'',certErr:'',certLoading:false,track:null,trackErr:'',trackLoading:false},
 psa:{tab:'cert',cert:'',certAsked:false,grp:'',inv:'',subAsked:false,applied:false}};
 
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -158,11 +164,58 @@ var CERTS={'12345678':{name:'2022 Pokemon Japanese Sword & Shield 示範卡',gra
 var SUBS={'25123456':{inv:'CCF-0001',date:'[送評日期]',cards:5,level:'[服務級別]',at:3,upd:'[最後更新時間]',grades:[]},
 '25123457':{inv:'CCF-0002',date:'[送評日期]',cards:3,level:'[服務級別]',at:6,upd:'[最後更新時間]',grades:[['示範卡 A｜寶可夢 日版 2022 #071','12345678','GEM MT 10'],['示範卡 E｜遊戲王 日版 1999 初版','87654321','NM-MT 8'],['示範卡 G｜寶可夢 日版 2023 #349','[證書編號]','[評級]']]}};
 var PSA_OFFICIAL=[['已到達','PSA 收到包裹'],['訂單準備','開箱登記，開始計處理時間'],['資料核對','Research & ID，核對卡片資料'],['評級','評級員檢查同評分'],['封裝','封入鑑定殼，加標籤'],['品質檢查','最後檢查'],['已寄出','PSA 寄回本店']];
-function certResult(){var c=S.psa.cert.trim();if(!S.psa.certAsked)return '';
+// ===== 接駁後台（API_BASE 有填先會用） =====
+// PSA 進度步驟 0–8 嘅名稱。PSA 文件冇寫明每個數字代表咩，
+// 呢個次序跟 PSA 網站顯示嘅階段排列，正式上線前要用真實回應核對一次。
+var PSA_STEP_NAMES=['已到達','訂單準備','資料核對','評級','封裝','品質檢查（一）','品質檢查（二）','準備寄出','已寄出'];
+var API_ERRORS={not_configured:'查詢服務未設定好，請聯絡本店。',psa_limit_reached:'今日 PSA 查詢次數已用完，請聽日再試，或者聯絡本店。',too_many_requests:'查詢太頻密，請等幾分鐘再試。',psa_auth_failed:'暫時連唔到 PSA，本店會跟進。',psa_unavailable:'PSA 系統暫時冇回應，請遲啲再試。',psa_bad_response:'PSA 回應有問題，請遲啲再試。',invalid_cert:'證書編號格式唔啱，請只輸入數字。',bad_request:'號碼格式唔啱，請核對收據。',network:'連唔到查詢服務，請檢查網絡再試。'};
+function apiErr(code){return API_ERRORS[code]||'查詢失敗，請遲啲再試。'}
+function liveCall(path,opts){return fetch(API_BASE.replace(/\/+$/,'')+path,opts).then(function(r){return r.json().catch(function(){return {}}).then(function(b){if(!r.ok)throw (b&&b.error)||'server_error';return b})},function(){throw 'network'})}
+function liveCert(){var n=S.psa.cert.trim(),L=S.live;L.certQ=n;L.cert=null;L.certErr='';
+if(!/^\d{5,12}$/.test(n)){L.certErr=apiErr('invalid_cert');render();return}
+L.certLoading=true;render();
+liveCall('/api/cert/'+encodeURIComponent(n)).then(function(b){if(L.certQ!==n)return;L.cert=b},function(e){if(L.certQ!==n)return;L.certErr=apiErr(e)}).then(function(){if(L.certQ===n){L.certLoading=false;render()}})}
+function liveTrack(){var g=S.psa.grp.trim(),v=S.psa.inv.trim(),L=S.live,key=g+'|'+v;L.trackQ=key;L.track=null;L.trackErr='';
+if(!g||!v){render();return}
+L.trackLoading=true;render();
+liveCall('/api/track',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group:g,invoice:v})}).then(function(b){if(L.trackQ!==key)return;L.track=b},function(e){if(L.trackQ!==key)return;L.trackErr=apiErr(e)}).then(function(){if(L.trackQ===key){L.trackLoading=false;render()}})}
+function loading(t){return '<div class="soft" role="status" aria-live="polite"><div class="s14 muted">'+t+'</div></div>'}
+function errBox(t){return '<div class="soft" role="alert"><div class="h2">查詢唔到</div><p class="s14 muted">'+esc(t)+'</p></div>'}
+function certResultLive(){var L=S.live;if(!S.psa.certAsked)return '';
+if(L.certLoading)return loading('查緊 PSA 官方記錄…');if(L.certErr)return errBox(L.certErr);
+var b=L.cert;if(!b)return '';
+if(!b.found)return '<div class="soft" role="status"><div class="h2">PSA 冇呢個證書編號</div><p class="s14 muted">請檢查鑑定殼標籤上嘅編號。如果編號正確但查唔到，請聯絡本店。</p></div>';
+var c=b.cert,title=[c.year,c.brand,c.cardNumber?'#'+c.cardNumber:'',c.subject,c.variety].filter(Boolean).join(' ');
+function row(k,v){return v||v===0?'<div class="kv"><span>'+k+'</span><span>'+esc(v)+'</span></div>':''}
+return '<div class="box" role="status" style="gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><div class="pill lead">PSA 官方記錄</div></div>'
++'<div class="s14" style="font-weight:500;line-height:1.4">'+esc(title)+'</div><div class="b" style="font-size:20px">PSA '+esc(c.grade||c.gradeDescription)+'</div>'
++'<div>'+row('證書編號',c.number)+row('評級描述',c.gradeDescription)+row('年份',c.year)+row('品牌／系列',c.brand)+row('卡號',c.cardNumber)+row('同級鑑定數量',c.population)+row('更高評級數量',c.populationHigher)+'</div></div>'}
+function subResultLive(){var L=S.live;if(!S.psa.subAsked)return '';
+if(!S.psa.grp.trim()||!S.psa.inv.trim())return '<div class="soft" role="status"><div class="h2">請輸入團號同帳單號碼</div><p class="s14 muted">兩個號碼都喺本店收據上面。</p></div>';
+if(L.trackLoading)return loading('查緊 PSA 官方記錄…');if(L.trackErr)return errBox(L.trackErr);
+var b=L.track;if(!b)return '';
+if(!b.matched)return '<div class="soft" role="status"><div class="h2">團號同帳單號碼對唔上</div><p class="s14 muted">請核對收據上嘅兩個號碼。如果冇錯，可能本店未登記好，請聯絡我哋。</p></div>';
+if(!b.found)return '<div class="soft" role="status"><div class="h2">PSA 暫時未有呢個團號嘅記錄</div><p class="s14 muted">PSA 通常收到卡片之後先會有記錄，請遲啲再查。</p></div>';
+var p=b.progress,steps=p.steps||[],cur=-1;steps.forEach(function(x,i){if(x.completed)cur=i});
+var now=cur>=0?(PSA_STEP_NAMES[steps[cur].step]||('步驟 '+steps[cur].step)):'未開始';
+function dot(done){return '<div style="width:22px;height:22px;border-radius:11px;flex-shrink:0;'+(done?'background:#4453B0':'border:2px solid #C9CFD8;background:#fff')+'"></div>'}
+var notes='';
+if(p.problemOrder)notes+='<div class="pill warn">PSA 標記咗需要跟進，本店會聯絡你</div>';
+if(p.accountingHold)notes+='<div class="pill warn">PSA 帳務暫停中，本店會跟進</div>';
+var when=b.checkedAt?new Date(b.checkedAt).toLocaleString('zh-HK',{hour12:false}):'';
+return '<div class="box" role="status" style="gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><div><div class="s12 muted">PSA 團號</div><div class="b" style="font-size:18px">'+esc(b.group)+'</div></div><div class="pill lead">PSA 官方記錄</div></div>'
++'<div class="s13 muted">帳單 '+esc(b.invoice)+(b.cards!=null?' · '+esc(b.cards)+' 張卡':'')+(b.level?' · '+esc(b.level):'')+(when?'<br>查詢時間：'+esc(when):'')+'</div>'+notes
++'<div class="s14 b">PSA 官方進度：'+esc(now)+'</div><div>'
++steps.map(function(x,i){var d=x.completed,isNow=i===cur;
+return '<div style="display:flex;gap:12px"><div style="display:flex;flex-direction:column;align-items:center">'+dot(d)+(i<steps.length-1?'<div style="width:2px;flex:1;min-height:14px;background:'+(d?'#4453B0':'#E4E7EC')+'"></div>':'')+'</div><div style="padding-bottom:12px"><div class="s14" style="font-weight:'+(isNow?700:500)+';color:'+(d?'#111418':'#5B6470')+'">'+esc(PSA_STEP_NAMES[x.step]||('步驟 '+x.step))+(isNow?'（目前）':'')+'</div></div></div>'}).join('')+'</div>'
++(p.shipped&&(p.shipCarrier||p.shipTrackingNumber)?'<div class="kv"><span>PSA 寄出</span><span>'+esc([p.shipCarrier,p.shipTrackingNumber].filter(Boolean).join(' '))+'</span></div>':'')
++(b.certs&&b.certs.length?'<section><div class="s14 b" style="margin-bottom:4px">PSA 已公佈評級</div>'+b.certs.map(function(c){return '<div class="kv" style="align-items:center"><span style="color:#111418;flex-shrink:1">'+esc(c.missing?'證書資料暫時未有':[c.year,c.brand,c.subject].filter(Boolean).join(' '))+'<br><span class="s12 muted">證書 '+esc(c.number)+'</span></span><span class="b">'+esc(c.missing?'—':(c.grade||c.gradeDescription))+'</span></div>'}).join('')+'</section>':(p.gradesReady?'<p class="s13 muted">PSA 已公佈評級，本店登記好證書編號之後會喺度顯示。</p>':''))
++'<div class="soft" style="padding:12px 14px;gap:4px"><div class="s13 b">本店跟進</div><div class="s13 muted">'+(p.shipped?'PSA 已寄出，卡片寄到香港後會通知你去門市自取或者安排送貨。':'PSA 寄出之後，本店會再更新寄回香港同取卡安排。')+'</div></div></div>'}
+function certResult(){if(API_BASE)return certResultLive();var c=S.psa.cert.trim();if(!S.psa.certAsked)return '';
 var r=CERTS[c];if(!r)return '<div class="soft" role="status"><div class="h2">搵唔到呢個證書編號</div><p class="s14 muted">請檢查鑑定殼標籤上嘅編號。示範可以試 12345678 或 87654321。</p></div>';
 return '<div class="box" role="status" style="gap:12px"><div style="display:flex;gap:14px">'+thumb()+'<div style="display:flex;flex-direction:column;gap:6px"><div class="pill lead">證書有效</div><div class="s14" style="font-weight:500;line-height:1.4">'+r.name+'</div><div class="b" style="font-size:18px">PSA '+r.grade+'</div></div></div>'
 +'<div><div class="kv"><span>證書編號</span><span>'+esc(c)+'</span></div><div class="kv"><span>年份</span><span>'+r.year+'</span></div><div class="kv"><span>品牌／系列</span><span>'+r.brand+'</span></div><div class="kv"><span>卡號</span><span>'+r.num+'</span></div><div class="kv"><span>同級鑑定數量</span><span>'+r.pop+'</span></div></div></div>'}
-function subResult(){if(!S.psa.subAsked)return '';
+function subResult(){if(API_BASE)return subResultLive();if(!S.psa.subAsked)return '';
 var g=S.psa.grp.trim(),v=S.psa.inv.trim().toUpperCase(),o=SUBS[g];
 if(!g||!v)return '<div class="soft" role="status"><div class="h2">請輸入團號同帳單號碼</div><p class="s14 muted">兩個號碼都喺本店收據上面。</p></div>';
 if(!o||o.inv!==v)return '<div class="soft" role="status"><div class="h2">團號同帳單號碼對唔上</div><p class="s14 muted">請核對收據。示範可以試團號 25123456 配帳單 CCF-0001，或者 25123457 配 CCF-0002。</p></div>';
@@ -177,12 +230,12 @@ return '<div style="display:flex;gap:12px"><div style="display:flex;flex-directi
 +'<div class="soft" style="padding:12px 14px;gap:4px"><div class="s13 b">本店跟進</div><div class="s13 muted">'+(done?'PSA 已寄出，卡片寄到香港後會通知你去門市自取或者安排送貨。':'PSA 寄出之後，本店會再更新寄回香港同取卡安排。')+'</div></div></div>'}
 V.psa=function(){var t=S.psa.tab;
 var body;
-if(t==='cert')body='<div class="field"><label for="cert">PSA 證書編號</label><input id="cert" type="text" inputmode="numeric" placeholder="鑑定殼標籤上嘅編號" data-bind="psa.cert" value="'+esc(S.psa.cert)+'"></div><button type="button" class="btn" style="flex:none" data-act="certGo">查詢</button><div class="s12 muted">示範編號：12345678、87654321</div>'+certResult();
+if(t==='cert')body='<div class="field"><label for="cert">PSA 證書編號</label><input id="cert" type="text" inputmode="numeric" placeholder="鑑定殼標籤上嘅編號" data-bind="psa.cert" value="'+esc(S.psa.cert)+'"></div><button type="button" class="btn" style="flex:none" data-act="certGo">查詢</button>'+(API_BASE?'':'<div class="s12 muted">示範編號：12345678、87654321</div>')+''+certResult();
 else if(t==='track')body='<p class="s13 muted" style="line-height:1.6">輸入收據上嘅團號同帳單號碼，直接查 PSA 官方記錄。</p><div class="field"><label for="pgrp">團號（PSA 送評編號）</label><input id="pgrp" type="text" inputmode="numeric" placeholder="例如 25123456" data-bind="psa.grp" value="'+esc(S.psa.grp)+'"></div><div class="field"><label for="pinv">帳單號碼</label><input id="pinv" type="text" placeholder="例如 CCF-0001" data-bind="psa.inv" value="'+esc(S.psa.inv)+'"></div><button type="button" class="btn" style="flex:none" data-act="subGo">查詢 PSA 記錄</button>'+subResult();
 else body=!S.user?gate('psa','申請 PSA 送評'):(S.psa.applied?'<div class="soft done" role="status" style="padding:24px 16px"><div class="tick" style="width:56px;height:56px">'+I.tick+'</div><div class="b" style="font-size:20px">已收到送評申請</div><p class="s14 muted">帳單號碼 CCF-0003。請喺 [收卡期限] 前將卡片交到 [門市地址]。本店寄出之後會通知你 PSA 團號，到時可以喺「送評進度」查 PSA 官方記錄。</p><button type="button" class="btn o sm" data-act="psaTab" data-arg="track">去送評進度</button></div>'
 :'<p class="s13 muted">我哋代你將卡片寄去 PSA 評級，評好之後寄返香港。</p><div class="two"><div class="field"><label for="pcount">卡片數量</label><input id="pcount" type="number" inputmode="numeric" placeholder="0"></div><div class="field"><label for="plevel">服務級別</label><select id="plevel"><option>[服務級別一]</option><option>[服務級別二]</option><option>[服務級別三]</option></select></div></div><div class="field"><label for="pval">申報總價值（HK$）</label><input id="pval" type="number" inputmode="numeric" placeholder="0"></div><label class="check"><input type="checkbox"><span>需要預先檢查同基本清潔</span></label><div class="soft" style="gap:6px"><div class="s14 b">收費</div><div class="s13 muted">[每張收費、清潔費、運費同處理時間]</div></div><button type="button" class="btn" style="flex:none" data-act="psaApply">提交送評申請</button>');
 return '<div class="top" style="padding-bottom:4px"><h1>鑑定</h1></div><div class="top" style="padding-top:4px"><div class="seg"><button type="button" class="'+(t==='cert'?'on':'')+'" aria-pressed="'+(t==='cert')+'" data-act="psaTab" data-arg="cert">證書查詢</button><button type="button" class="'+(t==='track'?'on':'')+'" aria-pressed="'+(t==='track')+'" data-act="psaTab" data-arg="track">送評進度</button><button type="button" class="'+(t==='apply'?'on':'')+'" aria-pressed="'+(t==='apply')+'" data-act="psaTab" data-arg="apply">申請送評</button></div></div>'
-+'<div class="scroll" style="padding-top:8px;gap:16px">'+body+'<p class="s12 muted" style="line-height:1.6">示範資料。正式版會經本店系統接駁 PSA 官方 API，查到真實證書同進度。</p></div>'+nav('psa')};
++'<div class="scroll" style="padding-top:8px;gap:16px">'+body+'<p class="s12 muted" style="line-height:1.6">'+(API_BASE?'資料來自 PSA 官方 API，經本店系統查詢。評級以 PSA 官網為準。':'示範資料。正式版會經本店系統接駁 PSA 官方 API，查到真實證書同進度。')+'</p></div>'+nav('psa')};
 
 var GAMES=[['寶可夢','集換式卡牌'],['海賊王','集換式卡牌'],['遊戲王','集換式卡牌'],['Weiß Schwarz','集換式卡牌'],['卡卡沃','集換式卡牌'],['籃球','運動卡'],['足球','運動卡']];
 var EVENTS=[
@@ -239,10 +292,10 @@ V.contact=function(){return head('聯絡我們','account')+'<div class="scroll" 
 :'<section style="display:flex;flex-direction:column;gap:16px"><h2 class="h2">留言俾我哋</h2><div class="field"><label for="ctopic">查詢類別</label><select id="ctopic"><option>PSA 鑑定</option><option>遊戲報名</option><option>取卡同運送</option><option>帳戶</option><option>其他</option></select></div><div class="field"><label for="cmsg">訊息</label><textarea id="cmsg" rows="5" placeholder="請描述你嘅問題，如有訂單編號請一併提供"></textarea></div><button type="button" class="btn" style="flex:none" data-act="send">送出訊息</button></section>')+'</div>'};
 
 var A={
-game:function(a){S.game=a},certGo:function(){S.psa.tab='cert';S.psa.certAsked=true},
+game:function(a){S.game=a},certGo:function(){S.psa.tab='cert';S.psa.certAsked=true;if(API_BASE)liveCert()},
 toLogin:function(){S.join=false},toJoin:function(){S.join=true},
 signin:function(){S.user=true;var to=S.after||'main';S.after=null;location.hash='#'+to},signout:function(){S.user=false},
-psaTab:function(a){S.psa.tab=a},psaTrack:function(){S.psa.tab='track'},subGo:function(){S.psa.subAsked=true},psaApply:function(){S.psa.applied=true},
+psaTab:function(a){S.psa.tab=a},psaTrack:function(){S.psa.tab='track'},subGo:function(){S.psa.subAsked=true;if(API_BASE)liveTrack()},psaApply:function(){S.psa.applied=true},
 reg:function(){S.regCount=(S.regCount||0)+1;S.regs[S.evId]='EV-00'+S.regCount;ev(S.evId).taken++},unreg:function(){delete S.regs[S.evId];ev(S.evId).taken--},
 notiToggle:function(a){S.noti[a]=!S.noti[a]},send:function(){S.sent=true},unsend:function(){S.sent=false}
 };

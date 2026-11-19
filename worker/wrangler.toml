@@ -1,0 +1,15 @@
+name = "card-card-fruit-api"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# App 嘅網址來源（唔使加路徑）。要加多個就用逗號分隔。
+ALLOWED_ORIGIN = "https://claudemic888-star.github.io"
+
+# 帳單記錄存放位置。按 README 第 3 步建立之後，將 id 換成 Cloudflare 俾你嘅號碼。
+[[kv_namespaces]]
+binding = "RECORDS"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# PSA_TOKEN 同 ADMIN_KEY 係 secret，唔好寫喺呢個檔案。
+# 用 README 第 4 步嘅指令設定。
